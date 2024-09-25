@@ -9,9 +9,9 @@ import os
 
 
 
+
 app = dash.Dash(__name__,prevent_initial_callbacks='initial_duplicate')
 server=app.server
-
 
 
 def can_see(r, vision):
@@ -20,9 +20,11 @@ def can_see(r, vision):
     # can_see is an n-by-n matrix where True if in vision False if out of vision
     x = r[:,0].reshape(1,-1)
     y = r[:,1].reshape(1,-1)
+    z = r[:,2].reshape(1,-1)
     delta_x = x-x.T
     delta_y = y-y.T
-    delta_r = np.stack((delta_x,delta_y))
+    delta_z = z-z.T
+    delta_r = np.stack((delta_x,delta_y, delta_z))
     delta_r = np.sqrt( np.sum(delta_r**2,axis=0) )
     in_vision = np.full(delta_r.shape, True)
     # we have a vision parameter that will exclude neighbors farther than a certain threshold
@@ -35,9 +37,11 @@ def scale_factor(r):
     # the output of this is an n-by-n matrix where scale[m,n] = 1/|r(m)-r(n)|^2
     x = r[:,0].reshape(1,-1) 
     y = r[:,1].reshape(1,-1)
+    z = r[:,2].reshape(1,-1)
     delta_x = x-x.T
     delta_y = y-y.T
-    delta_r = np.stack((delta_x,delta_y))
+    delta_z = z-z.T
+    delta_r = np.stack((delta_x,delta_y,delta_z))
     delta_r2 = np.sum(delta_r**2,axis=0)
     scale = np.zeros_like(delta_r2,dtype=float)
     scale[delta_r2!=0] =1/delta_r2[delta_r2!=0] 
@@ -46,17 +50,20 @@ def scale_factor(r):
 def F_avoid(r,vision, avoid_factor):
     in_vision = can_see(r,vision)
     scale = scale_factor(r)
-    fudge_factor = 15
+    fudge_factor = 7.5 
     n_in_vision = np.sum(in_vision,axis=1).astype(float)
     mask = n_in_vision!=0
     n_in_vision[mask] = 1/n_in_vision[mask]
     x = r[:,0].reshape(1,-1)
     y = r[:,1].reshape(1,-1)
+    z = r[:,2].reshape(1,-1)
     delta_x = -(x-x.T) * scale * in_vision
     delta_y = -(y-y.T) * scale * in_vision
+    delta_z = -(z-z.T) * scale * in_vision
     dx = (np.sum(delta_x, axis=1)) 
-    dy = (np.sum(delta_y, axis=1))      
-    dv = np.stack((dx,dy),axis=1)*n_in_vision.reshape(-1,1)*avoid_factor*fudge_factor
+    dy = (np.sum(delta_y, axis=1)) 
+    dz = (np.sum(delta_z, axis=1))         
+    dv = np.stack((dx,dy,dz),axis=1)*n_in_vision.reshape(-1,1)*avoid_factor*fudge_factor
     return dv
     
 
@@ -64,59 +71,69 @@ def F_avoid(r,vision, avoid_factor):
 def F_align(r,v,vision,match_factor):  
     in_vision = can_see(r,vision)
     scale = scale_factor(r)
-    fudge_factor = 10.84
+    fudge_factor = 13.3
     n_in_vision = np.sum(in_vision,axis=1).astype(float)
     mask = n_in_vision!=0
     n_in_vision[mask] = 1/n_in_vision[mask]
     vx = v[:,0]
     vy = v[:,1]
+    vz = v[:,2]
     n=vx.size
     vx_block = (np.tile(vx,(n,1))) * scale * in_vision
     vy_block = (np.tile(vy,(n,1))) * scale * in_vision
+    vz_block = (np.tile(vz,(n,1))) * scale * in_vision
     dvx = (np.sum(vx_block, axis=1))
     dvy = (np.sum(vy_block, axis=1))
-    dv = np.stack((dvx,dvy), axis=1)*np.sqrt(n_in_vision).reshape(-1,1)*match_factor*fudge_factor
+    dvz = (np.sum(vz_block, axis=1))
+    dv = np.stack((dvx,dvy,dvz), axis=1)*np.sqrt(n_in_vision).reshape(-1,1)*match_factor*fudge_factor
     return dv
     
 def F_cohesion(r,vision,centering_factor):
     in_vision = can_see(r,vision)
     x = r[:,0]
     y = r[:,1]
+    z = r[:,2]
     n = x.size
-    fudge_factor = 0.0166
+    fudge_factor = 0.025
     if n<=1:
-        dv = np.array([0,0])
+        dv = np.array([0,0,0])
     else:
         in_vision = can_see(r,vision)
         x_block = (np.tile(x,(n,1))) * in_vision
         y_block = (np.tile(y,(n,1))) * in_vision
+        z_block = (np.tile(z,(n,1))) * in_vision
         np.fill_diagonal(x_block,0)
         np.fill_diagonal(y_block,0)
+        np.fill_diagonal(z_block,0)
         x_ave = np.sum(x_block, axis=1)/(np.max([1,n-1]))
         y_ave = np.sum(y_block, axis=1)/(np.max([1,n-1]))
+        z_ave = np.sum(z_block, axis=1)/(np.max([1,n-1]))
         dx =np.log(1+np.abs(x_ave-x))*np.sign(x_ave-x)  
         dy =np.log(1+np.abs(y_ave-y))*np.sign(y_ave-y)
-        dv = np.stack((dx,dy),axis=1)*centering_factor*fudge_factor
+        dz =np.log(1+np.abs(z_ave-z))*np.sign(z_ave-z)  
+        dv = np.stack((dx,dy,dz),axis=1)*centering_factor*fudge_factor
     return dv
 
-def mind_edges(r,w,h,margin, turn_factor):
-    # The birds will be constrained to a rectangle (0,0) and dimensions 2w-by-2h, turn when approach margin.
+def mind_edges(r,L,margin, turn_factor):
+    # The birds will be constrained to a cube of center (0,0,0) and side length 2L, turn around when approach margin.
     fudge_factor = 1
     x=r[:,0]
     y=r[:,1]
-    right = w-margin
-    left = -right
-    top = h -margin
+    z=r[:,2]
+    top = L -margin
     bot = top*-1
     n= len(x)
     dx = np.zeros(x.size)
     dy = np.zeros(y.size)
-    dx[x<left] = (left-x[x<left])
-    dx[x>right] = (right-x[x>right])
+    dz = np.zeros(z.size)
+    dx[x<bot] = (bot-x[x<bot])
+    dx[x>top] = (top-x[x>top])
     dy[y<bot] = (bot-y[y<bot])
     dy[y>top] = (top-y[y>top])
+    dz[z<bot] = (bot-z[z<bot])
+    dz[z>top] = (top-z[z>top])
     # the other forces on the birds tend to scale with n, so let's scale this with n, too
-    dv = (np.stack((dx,dy), axis=1)) * n *turn_factor*fudge_factor 
+    dv = (np.stack((dx,dy,dz), axis=1)) * n *turn_factor*fudge_factor 
     return dv
     
 def limit_speed(v,min_speed,max_speed):
@@ -129,12 +146,12 @@ def limit_speed(v,min_speed,max_speed):
     return v
 
 def initialize_birds(n, L, margin, min_speed, max_speed):
-    mean = [0,0]
-    mean_v = np.random.uniform(-max_speed, max_speed, 2)
+    mean = [0,0,0]
+    mean_v = np.random.uniform(-max_speed, max_speed, 3)
     edge = L - margin 
-    cov = np.identity(2)*edge 
+    cov = np.identity(3)*edge 
     r = np.random.multivariate_normal(mean, cov,n)
-    cov_v = np.identity(2)*0.2 
+    cov_v = np.identity(3)*0.2 
     v =  np.random.multivariate_normal(mean_v, cov_v, n)
     v_hat = v/np.linalg.norm(v,axis=1).reshape(-1,1)
     v_mag = np.random.uniform(min_speed , max_speed, (n,1))
@@ -152,26 +169,25 @@ def update_traj(r,v,params):
     vision=params['vision']
     avoid_factor=params['avoid_factor']
     match_factor=params['match_factor']
-    w=params['w']
-    h=params['h']
+    L=params['L']
     margin=params['margin']
     turn_factor=params['turn_factor']
     centering_factor=params['centering_factor']
     max_speed=params['max_speed']
     min_speed=params['min_speed']
     v = v +  ( F_avoid(r,vision, avoid_factor) + F_align(r,v,vision,match_factor) + 
-            F_cohesion(r,vision,centering_factor) + mind_edges(r,w,h,margin, turn_factor) )
+            F_cohesion(r,vision,centering_factor) + mind_edges(r,L,margin, turn_factor) )
     v = limit_speed(v,min_speed,max_speed)
-    r,v = add_more_birds(r,v,n_old,n_new,params)
+    r,v = add_more_birds(r,v,n_old,n_new, params)
     r = r+v
     return r,v
 
 
-def add_more_birds(r,v,n_old,n_new,params):
-    L=params['h']
+def add_more_birds(r,v,n_old,n_new, params):
+    L = params['L']
+    margin = params['margin']
     min_speed = params['min_speed']
     max_speed = params['max_speed']
-    margin = params['margin']
     if not(n_new is None):
         if n_old>n_new:
             if n_new>0:
@@ -186,25 +202,21 @@ def add_more_birds(r,v,n_old,n_new,params):
     return r,v
 
 
-############################################
-# start of the dash app #
 
-
-n_default =100
-avoid_factor_default =3
-match_factor_default =3
+n_default = 100
+avoid_factor_default = 3
+match_factor_default = 3
 centering_factor_default = 3
-w_default  = 200
-h_default =300 
-vision_default =150
+L_default = 200
+vision_default =20
 margin_default  = 10
-turn_factor_default  = .01
-max_speed_default = 4
+turn_factor_default  = 1.5
+max_speed_default = 5
 min_speed_default = 2
-frame_duration_default  = 70
-marker_size =10
-marker_symbol ='arrow' #arrow, square, diamond, star, cross, 
-color_scheme = 'rainbow'
+frame_duration_default = 70
+marker_size =3
+marker_symbol ='circle' #arrow, square, diamond, star, cross, 
+color_scheme = 'sunset'
 #nice colors:  mint, plasma, rainbow, sunset, sunsetdark, viridis
 
 
@@ -213,14 +225,13 @@ params = {
     'vision':vision_default,
     'avoid_factor':avoid_factor_default,
     'match_factor':match_factor_default,
-    'w':w_default ,
-    'h':h_default ,
-    'margin':margin_default ,
-    'turn_factor':turn_factor_default ,
-    'centering_factor':centering_factor_default ,
-    'frame_duration': frame_duration_default ,
-    'max_speed':max_speed_default ,
-    'min_speed':min_speed_default  }
+    'L':L_default,
+    'margin':margin_default,
+    'turn_factor':turn_factor_default,
+    'centering_factor':centering_factor_default,
+    'frame_duration': frame_duration_default,
+    'max_speed':max_speed_default,
+    'min_speed':min_speed_default }
 
 defaults = params.copy()
 
@@ -228,22 +239,26 @@ defaults = params.copy()
 
 animation_running = False
 pause_event = Event()
-r,v = initialize_birds(n_default, h_default, margin_default, min_speed_default, max_speed_default)
+r,v = initialize_birds(n_default, L_default, margin_default, min_speed_default, max_speed_default)
 x_data=r[:,0]
 y_data=r[:,1]
+z_data=r[:,2]
 
 
 
 
 
-# Layout
+
+
+
+    # Layout
 app.layout = html.Div(
     [
         html.Div(
             [
                 dcc.Graph(
                     id='scatter-plot',
-                    style={'width': '100%', 'height': '95vh'}, 
+                    style={'width': '100%', 'height': '100vh'}, 
                     config={'displayModeBar': False} 
                 )                
             ],
@@ -278,7 +293,7 @@ app.layout = html.Div(
     [
         html.Button('Play', id='play-button', n_clicks=0, style={'margin-right': '10px', 'display': 'inline-block', 'width': '80px', 'height': '30px', 'background-color':'rgb(237,245,255)','border-color':'rgb(214,220,230)'}),
         html.Button('Pause', id='pause-button', n_clicks=0, style={'margin-right': '10px', 'display': 'inline-block', 'width': '80px', 'height': '30px', 'background-color':'rgb(237,245,255)','border-color':'rgb(214,220,230)'}),
-        html.Button('Reset', id='reset-button', n_clicks=0, style={'margin-right': '10px', 'display': 'inline-block', 'width': '80px', 'height': '30px', 'background-color':'rgb(237,245,255)','border-color':'rgb(214,220,230)'}),
+        html.Button('Reset', id='reset-button', n_clicks=0, style={'margin-right': '10px', 'display': 'inline-block', 'width': '80px', 'height': '30px', 'background-color':'rgb(237,245,255)','border-color':'rgb(214,220,230)'}),    
         # Container for Number of Birds
         html.Div([
             html.Label('Number of Birds', style={'display': 'block', 'margin-bottom': '5px'}),
@@ -290,12 +305,12 @@ app.layout = html.Div(
                 min=1,
                 debounce=False,
                 required=True,
-                style={'display': 'inline-block', 'width': '87px', 'height': '25px', 'vertical-align': 'bottom'}
+                style={'display': 'inline-block', 'width': '85px', 'height': '25px', 'vertical-align': 'bottom'}
             )
         ], style={'display': 'inline-block', 'margin-right': '20px', 'text-align': 'left', 'vertical-align': 'bottom'}),
         # Container for Frame Duration
         html.Div([
-            html.Label('Frames (ms)', style={'display': 'block', 'margin-bottom': '5px'}),
+            html.Label('Frame duration (ms)', style={'display': 'block', 'margin-bottom': '5px'}),
             dcc.Input(
                 id='frame_duration',
                 type='number',
@@ -304,18 +319,18 @@ app.layout = html.Div(
                 min=1,
                 debounce=True,
                 required=True,
-                style={'display': 'inline-block', 'width': '67px', 'height': '25px', 'vertical-align': 'bottom'}
+                style={'display': 'inline-block', 'width': '80px', 'height': '25px', 'vertical-align': 'bottom'}
             )
         ], style={'display': 'inline-block', 'text-align': 'left', 'vertical-align': 'bottom'})
     ],
     style={'text-align': 'left', 'padding': '10px 0', 'display': 'flex', 'align-items': 'flex-end'}
 ),
-                        html.Div([html.Label('Avoid Factor', style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 10, 0.01, value=avoid_factor_default, id='avoid_slider', tooltip={"placement": "right", "always_visible": True}, marks=None) ]),
-                        html.Div([html.Label('Match Factor', style={'display': 'block', 'margin-bottom': '5px'} ), dcc.Slider(0, 10, 0.01, value=match_factor_default, id='match_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'margin': '0 0'}),
-                        html.Div([html.Label('Centering Factor', style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 10, 0.01, value=centering_factor_default, id='centering_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'margin': '0 0'}),
-                        html.Div([html.Label('Field of Vision', style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 350, 0.1, value=vision_default, id='vision_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'margin': '0 0'}),
-                        html.Div([html.Label('Turn Factor',style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 10, 0.01, value=turn_factor_default, id='turn_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'display':'none'}),
-                        html.Div([html.Label('Speed', style={'display': 'block', 'margin-bottom': '5px'}), dcc.RangeSlider(0, 10, 0.01, value=[min_speed_default, max_speed_default], id='speed_slider', tooltip={"placement": "bottom", "always_visible": True}, marks=None)], style={'margin': '0 0'})
+                        html.Div([html.Label('Avoid Factor', style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 10, 0.01, value = avoid_factor_default, id='avoid_slider', tooltip={"placement": "right", "always_visible": True}, marks=None) ]),
+                        html.Div([html.Label('Match Factor', style={'display': 'block', 'margin-bottom': '5px'} ), dcc.Slider(0, 10, 0.01, value=match_factor_default , id='match_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'margin': '0 0'}),
+                        html.Div([html.Label('Centering Factor', style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 10, 0.01, value=centering_factor_default , id='centering_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'margin': '0 0'}),
+                        html.Div([html.Label('Field of Vision', style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 350, 0.1, value=vision_default , id='vision_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'margin': '0 0'}),
+                        html.Div([html.Label('Turn Factor',style={'display': 'block', 'margin-bottom': '5px'}), dcc.Slider(0, 10, 0.01, value=turn_factor_default , id='turn_slider', tooltip={"placement": "right", "always_visible": True}, marks=None)], style={'display':'none'}),
+                        html.Div([html.Label('Speed', style={'display': 'block', 'margin-bottom': '5px'}), dcc.RangeSlider(0, 10, 0.01, value=[min_speed_default , max_speed_default], id='speed_slider', tooltip={"placement": "bottom", "always_visible": True}, marks=None)], style={'margin': '0 0'})
                     ],
                     style={'margin-top': 'auto'}  # Align sliders at the bottom
                 )
@@ -330,9 +345,12 @@ app.layout = html.Div(
         dcc.Store(id='params', data=params),
         dcc.Store(id='default_values', data=defaults),
     ],
-    style={'display': 'flex', 'flex-direction': 'row', 'width': '99vw', 'height': '95vh',   'overflow':'hidden',
+    style={'display': 'flex', 'flex-direction': 'row', 'width': '100vw', 'height': '95vh', 'overflow': 'hidden',   
                                 'fontFamily' : 'Arial', 'fontSize':13, 'color':'#333333'}  # Ensures full screen utilization
 )
+
+
+
 
 
 
@@ -351,37 +369,55 @@ def change_frame_interval_duration(frame_duration):
 
 
 
-
-
-def draw_graph(r,v,params):
+def draw_graph(r,params):
     x_data=r[:,0]
     y_data=r[:,1]
-    vx_data=v[:,0]
-    vy_data=v[:,1]
-    w=params['w']
-    h=params['h']
+    z_data=r[:,2]
+    L=params['L']
+
     # Create the scatter plot
     fig = go.Figure(
-        data=[go.Scatter(x=x_data, y=y_data, mode='markers',
-                        marker=dict(color=np.linspace(0, 1, params['n']), colorscale=color_scheme, size=marker_size, angle= np.degrees(np.arctan2(vx_data,vy_data)), symbol=marker_symbol))],
-        layout=go.Layout(
-            xaxis=dict(range=[-w,w]),
-            yaxis=dict(range=[-h, h]),
-            title="A Flock of Birds",
+        data=[go.Scatter3d(
+            x=x_data, y=y_data, z=z_data, mode='markers',
+            marker=dict(color=np.linspace(0, 1, params['n']), colorscale=color_scheme, size=marker_size, symbol=marker_symbol)
+            )],
+        layout= dict(
             autosize=True,
-            margin=dict(l=0, r=25, t=60, b=40)
+            scene = dict(
+                xaxis = dict(
+                    range=[-L,L],
+                    autorange=False
+                ),
+                yaxis = dict(
+                    range=[-L,L],
+                    autorange=False
+                ),
+                zaxis = dict(
+                    range=[-L,L],
+                    autorange=False
+                ),
+                aspectmode = 'cube',
+                camera= {
+                    'center': { 'x': 0, 'y': 0, 'z': 0 }, 
+                    'eye': { 'x': -1.7, 'y': -1.7, 'z': -1.7 },   #   cool --> 'eye': { 'x': -1.7, 'y': -1.7, 'z': -1.7 },   
+                    'up': { 'x': 0, 'y': 0, 'z': 1.5 }
+                }
+            ),
+            margin=dict(l=0, r=0, t=0, b=0)
         )
     )
     return fig
 
+
+
 def initialize_graph(params):
     n = params['n']
-    h = params['h']
+    L = params['L']
     margin=params['margin']
     min_speed = params['min_speed'] 
     max_speed = params['max_speed']
-    r,v = initialize_birds(n,h,margin,min_speed,max_speed)
-    fig = draw_graph(r,v,params)
+    r,v = initialize_birds(n,L,margin,min_speed,max_speed)
+    fig = draw_graph(r,params)
     return r,v,fig
 
 
@@ -400,7 +436,7 @@ def initialize_graph(params):
 def update_graph(n_intervals,params,r,v):
     # this is automatically updated everytime the interval-component is updated, thus providing the animation.
     r,v = update_traj(r, v,params)  
-    fig = draw_graph(r,v,params)
+    fig = draw_graph(r,params)
     return fig,r,v
 
 
@@ -413,11 +449,10 @@ def update_graph(n_intervals,params,r,v):
     Input('match_slider', 'value'),
     Input('centering_slider','value'), 
     Input('turn_slider', 'value'),
-    Input('speed_slider','value'),
-    Input('frame_duration','value'), 
+    Input('speed_slider','value'), 
     State('params','data')
 )
-def update_params(n_birds,vision_slider,avoid_slider,match_slider,centering_slider,turn_slider, speed_slider,frame_duration, params):
+def update_params(n_birds,vision_slider,avoid_slider,match_slider,centering_slider,turn_slider, speed_slider,params):
     params['n']=n_birds
     params['vision']=vision_slider
     params['avoid_factor']=avoid_slider
@@ -426,7 +461,6 @@ def update_params(n_birds,vision_slider,avoid_slider,match_slider,centering_slid
     params['turn_factor']=turn_slider
     params['min_speed']=min(speed_slider)
     params['max_speed']=max(speed_slider)
-    params['frame_duration']=frame_duration
     return params
 
 
@@ -470,21 +504,20 @@ def control_animation(play_clicks, pause_clicks):
 )
 def reset_app(reset,defaults):
     params = defaults
-    n_birds = defaults['n']
-    vision_slider = defaults['vision']
-    avoid_slider = defaults['avoid_factor']
-    match_slider = defaults['match_factor']
-    centering_slider = defaults['centering_factor']
-    turn_slider = defaults['turn_factor']
-    speed_slider = [defaults['min_speed'], defaults['max_speed']]
-    frame_duration = defaults['frame_duration']
+    n_birds = n_default 
+    vision_slider = vision_default
+    avoid_slider = avoid_factor_default
+    match_slider = match_factor_default
+    centering_slider = centering_factor_default
+    turn_slider = turn_factor_default
+    speed_slider = [min_speed_default, max_speed_default]
+    frame_duration = frame_duration_default
     interval_disabled = True
     r,v, fig = initialize_graph(params)
-    return params,n_birds,vision_slider,avoid_slider,match_slider,centering_slider,turn_slider,speed_slider,interval_disabled,frame_duration, fig,r,v  
+    return params,n_birds,vision_slider,avoid_slider,match_slider,centering_slider,turn_slider,speed_slider,interval_disabled,frame_duration,fig,r,v  
 
 
 # Run the app
-
 if __name__ == "__main__":
     app.run_server(host='0.0.0.0', port=int(os.environ.get('PORT', 8050)))
 
