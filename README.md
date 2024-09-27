@@ -1,6 +1,6 @@
 This is a vectorized implementation of the Boids algorithm for bird flocking animations.  I have given a 3d and 2d version. 
 
-You can see the project on Google Cloud Run by visiting one of these links.  Note, on Google Cloud Run, latency is a serious issue, so pick the link corresponding to the location that is closer to you:
+You can see run the interactive project from your browser on Google Cloud Run by visiting one of these links.  Note, on Google Cloud Run, latency is a serious issue, so pick the link corresponding to the location that is closer to you:
 
 https://birds-animation-2d-los-angeles-932053663419.us-west2.run.app
 
