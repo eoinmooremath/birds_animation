@@ -23,6 +23,19 @@ You can run the interactive apps directly from your browser.
 
 ---
 
+
+## 🧠 How the Boids Algorithm Works
+
+Each bird follows three simple rules based on nearby flockmates:
+
+1. **Separation (Avoid):** Steer away to avoid overcrowding.
+2. **Alignment:** Match velocity with neighbors.
+3. **Cohesion (Centering):** Move toward the flock’s center.
+
+These behaviors are modulated by adjustable weights and a “field of vision” distance.
+
+---
+
 ## :star: Features
 
 - **Real-time interactive animation** of bird flocking in 2D and 3D.
@@ -75,17 +88,6 @@ Traditional Boids code iterates through each bird and its neighbors using for-lo
 
 ---
 
-## 🧠 How the Boids Algorithm Works
-
-Each bird follows three simple rules based on nearby flockmates:
-
-1. **Separation (Avoid):** Steer away to avoid overcrowding.
-2. **Alignment:** Match velocity with neighbors.
-3. **Cohesion (Centering):** Move toward the flock’s center.
-
-These behaviors are modulated by adjustable weights and a “field of vision” distance.
-
----
 
 ## 🛠️ Customization
 
