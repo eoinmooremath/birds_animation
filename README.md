@@ -1,4 +1,4 @@
-# Birds Flocking Animation (2D & 3D, Vectorized Boids Algorithm)
+# Birds Flocking Animation (2D & 3D)
 
 This project demonstrates interactive 2D and 3D bird flocking animations based on the classic **Boids algorithm**—a well-known model for simulating the collective movement of flocks, herds, or swarms. Unlike most implementations, **this project uses a fully vectorized approach with NumPy**, avoiding for-loops and OOP for high performance and clarity.
 
