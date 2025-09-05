@@ -12,12 +12,12 @@ You can run the interactive apps directly from your browser.
 **Tip:** For best performance, use the Cloud Run location closer to you.
 
 **2D Version:**  
-- [Los Angeles (US West)](https://birds-animation-2d-los-angeles-932053663419.us-west2.run.app)  
-- [Montreal (Canada East)](https://birds-animation-2d-montreal-932053663419.northamerica-northeast1.run.app)
+- [Los Angeles (US West)](https://birds-animation-932053663419.us-west2.run.app)  
+- [Toronto (Canada East)](https://birds-animation-2d-montreal-932053663419.northamerica-northeast1.run.app)
 
 **3D Version:**  
-- [Los Angeles (US West)](https://birds-animation-3d-los-angeles-810457048638.us-west2.run.app)  
-- [Montreal (Canada East)](https://birds-animation-3d-montreal-810457048638.northamerica-northeast1.run.app/)
+- [Los Angeles (US West)](https://birds-animation-3d-los-angeles-932053663419.us-west2.run.app)  
+- [Toronto (Canada East)](https://birds-animation-3d-toronto-932053663419.northamerica-northeast2.run.app)
 
 > **Note:** Cloud Run has some latency. For the smoothest experience, lower the number of birds or increase the animation frame duration if needed.
 
