@@ -5,10 +5,7 @@ from dash import dcc, html
 from dash.dependencies import Input, Output, State
 from threading import Event
 import os
-
-
-
-
+import time  # >>> ADDED
 
 app = dash.Dash(__name__,prevent_initial_callbacks='initial_duplicate')
 server=app.server
@@ -246,12 +243,7 @@ z_data=r[:,2]
 
 
 
-
-
-
-
-
-    # Layout
+# Layout
 app.layout = html.Div(
     [
         html.Div(
@@ -276,7 +268,7 @@ app.layout = html.Div(
                         html.Li(["Birds want to ", html.Em("avoid", style={'textDecoration' : 'underline', 'color' : 'darkgreen'}) , " collision and steer away from other birds."]),
                         html.Li(["Birds want to ",  html.Em("align" ,style={'textDecoration' : 'underline', 'color' : 'darkgreen'}), " their flight direction and speed with their flockmates."]),
                         html.Li(["Birds want to head towards the ", html.Em("center", style={'textDecoration' : 'underline', 'color' : 'darkgreen'}), " of the flock."])
-                    ]),
+                    ]), 
                     html.P(["The birds make their decisions based on what (how far) they can see, which you can control by the ", html.Em("Field of Vision", style= {'textDecoration' : 'underline', 'color' : 'darkgreen'}), " slider. Also, as in real life, birds have minimum and maximum flying ", html.Em("speed", style= {'textDecoration' : 'underline', 'color' : 'darkgreen'}), "."]),
                     html.P("Programatically, Boids algorithm is usually implemented using object oriented programming, looping over bird as objects. As an experiment, I implemented the algorithm using entirely vectorization. I used neither objects nor for-loops."),
                     html.P(html.Em("If the animation is lagging, decrease the number of birds or increase the frames duration.", style={'fontSize':12}))
@@ -344,15 +336,16 @@ app.layout = html.Div(
         dcc.Store(id='v', data=v.tolist()),
         dcc.Store(id='params', data=params),
         dcc.Store(id='default_values', data=defaults),
+
+        # >>> ADDED: visibility + session safety nets
+        dcc.Store(id='visible', data=True),
+        dcc.Store(id='run_started_ms', data=None),
+        dcc.Store(id='max_runtime_min', data=10),
+        dcc.Interval(id='vis-poll', interval=1000, n_intervals=0, disabled=False),
     ],
     style={'display': 'flex', 'flex-direction': 'row', 'width': '100vw', 'height': '95vh', 'overflow': 'hidden',   
                                 'fontFamily' : 'Arial', 'fontSize':13, 'color':'#333333'}  # Ensures full screen utilization
 )
-
-
-
-
-
 
 @app.callback(
     Output('interval-component', 'interval'),
@@ -366,8 +359,6 @@ def change_frame_interval_duration(frame_duration):
     else: 
         new_interval = frame_duration 
     return new_interval
-
-
 
 def draw_graph(r,params):
     x_data=r[:,0]
@@ -408,8 +399,6 @@ def draw_graph(r,params):
     )
     return fig
 
-
-
 def initialize_graph(params):
     n = params['n']
     L = params['L']
@@ -420,26 +409,44 @@ def initialize_graph(params):
     fig = draw_graph(r,params)
     return r,v,fig
 
+# >>> ADDED: client-side visibility watcher (1s poll)
+app.clientside_callback(
+    """
+    function(n){ return !document.hidden; }  // true if tab is visible
+    """,
+    Output('visible','data'),
+    Input('vis-poll','n_intervals')
+)
 
-
-
-
-# Update the plot in real-time
+# Update the plot in real-time  (now enforces 10-min cap + robust redraw)
 @app.callback(
     Output('scatter-plot', 'figure',allow_duplicate = True),
     Output('r','data',allow_duplicate = True),
     Output('v','data',allow_duplicate = True),
+    Output('interval-component','disabled', allow_duplicate=True),  # >>> ADDED (pause on cutoff)
     Input('interval-component', 'n_intervals'),
     Input('params','data'),
     State('r','data'),
-    State('v','data'))
-def update_graph(n_intervals,params,r,v):
-    # this is automatically updated everytime the interval-component is updated, thus providing the animation.
+    State('v','data'),
+    State('run_started_ms','data'),      # >>> ADDED
+    State('max_runtime_min','data')      # >>> ADDED
+)
+def update_graph(n_intervals,params,r,v,started_ms,max_min):
+    # Hard session cap
+    if started_ms is not None and max_min:
+        if (time.time()*1000) - started_ms > max_min*60_000:
+            return dash.no_update, r, v, True
+
     r,v = update_traj(r, v,params)  
     fig = draw_graph(r,params)
-    return fig,r,v
 
+    # Force redraw every tick across Plotly versions
+    try:
+        fig.layout.datarevision = int(n_intervals or 0)
+    except Exception:
+        pass
 
+    return fig,r,v, dash.no_update
 
 @app.callback(
     Output('params','data',allow_duplicate = True),
@@ -463,27 +470,41 @@ def update_params(n_birds,vision_slider,avoid_slider,match_slider,centering_slid
     params['max_speed']=max(speed_slider)
     return params
 
-
-# Play button callback to start the animation
+# Play/Pause (records start time on Play)  >>> ADDED run_started_ms
 @app.callback(
     Output('interval-component', 'disabled', allow_duplicate = True),
-    [Input('play-button', 'n_clicks'),
-    Input('pause-button', 'n_clicks')])
-def control_animation(play_clicks, pause_clicks):
+    Output('run_started_ms','data', allow_duplicate=True),  # >>> ADDED
+    Input('play-button', 'n_clicks'),
+    Input('pause-button', 'n_clicks'),
+    State('run_started_ms','data'),
+    prevent_initial_call=True
+)
+def control_animation(play_clicks, pause_clicks, started_ms):
     ctx = dash.callback_context
     if not ctx.triggered:
-        return True
+        return dash.no_update, dash.no_update
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     if button_id == 'play-button':
         animation_running = True
         pause_event.clear()
-        return False  # Enable the interval to start real-time updates
+        return False, int(time.time()*1000)  # enable + mark session start
     elif button_id == 'pause-button':
         animation_running = False
         pause_event.set()
-        return True  # Disable the interval to stop real-time updates
-    return True
+        return True, started_ms  # pause
+    return True, started_ms
 
+# >>> ADDED: auto-pause when tab hidden (don’t auto-resume)
+@app.callback(
+    Output('interval-component','disabled', allow_duplicate=True),
+    Input('visible','data'),
+    State('interval-component','disabled'),
+    prevent_initial_call=True
+)
+def pause_when_hidden(visible, is_disabled):
+    if visible is False and not is_disabled:
+        return True
+    return dash.no_update
 
 @app.callback(
     Output('params','data',allow_duplicate = True),
@@ -499,6 +520,7 @@ def control_animation(play_clicks, pause_clicks):
     Output('scatter-plot', 'figure',allow_duplicate = True),
     Output('r','data',allow_duplicate = True),
     Output('v','data',allow_duplicate = True),
+    Output('run_started_ms','data', allow_duplicate=True),  # >>> ADDED: clear on reset
     Input('reset-button', 'n_clicks'),
     State('default_values','data')
 )
@@ -514,11 +536,8 @@ def reset_app(reset,defaults):
     frame_duration = frame_duration_default
     interval_disabled = True
     r,v, fig = initialize_graph(params)
-    return params,n_birds,vision_slider,avoid_slider,match_slider,centering_slider,turn_slider,speed_slider,interval_disabled,frame_duration,fig,r,v  
-
+    return params,n_birds,vision_slider,avoid_slider,match_slider,centering_slider,turn_slider,speed_slider,interval_disabled,frame_duration,fig,r,v, None
 
 # Run the app
 if __name__ == "__main__":
-    app.run_server(host='0.0.0.0', port=int(os.environ.get('PORT', 8050)))
-
-    
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8050)))
