@@ -13,7 +13,7 @@ You can run the interactive apps directly from your browser.
 
 **2D Version:**  
 - [Los Angeles (US West)](https://birds-animation-932053663419.us-west2.run.app)  
-- [Toronto (Canada East)](https://birds-animation-2d-montreal-932053663419.northamerica-northeast1.run.app)
+- [Toronto (Canada East)](https://birds-animation-2d-toronto-932053663419.northamerica-northeast2.run.app/)
 
 **3D Version:**  
 - [Los Angeles (US West)](https://birds-animation-3d-los-angeles-932053663419.us-west2.run.app)  
